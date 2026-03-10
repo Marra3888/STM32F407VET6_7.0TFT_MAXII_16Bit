@@ -1,0 +1,10 @@
+../Core/lvgl/src/draw/lv_draw_label.c:100:28:lv_draw_label.part.0	10
+../Core/lvgl/src/draw/lv_draw_label.c:63:6:lv_draw_letter_dsc_init	1
+../Core/lvgl/src/draw/lv_draw_label.c:75:6:lv_draw_label_dsc_init	1
+../Core/lvgl/src/draw/lv_draw_label.c:90:23:lv_draw_task_get_label_dsc	2
+../Core/lvgl/src/draw/lv_draw_label.c:95:6:lv_draw_glyph_dsc_init	1
+../Core/lvgl/src/draw/lv_draw_label.c:100:28:lv_draw_label	6
+../Core/lvgl/src/draw/lv_draw_label.c:140:28:lv_draw_character	17
+../Core/lvgl/src/draw/lv_draw_label.c:181:28:lv_draw_letter	4
+../Core/lvgl/src/draw/lv_draw_label.c:215:6:lv_draw_label_iterate_characters	101
+../Core/lvgl/src/draw/lv_draw_label.c:595:6:lv_draw_unit_draw_letter	24

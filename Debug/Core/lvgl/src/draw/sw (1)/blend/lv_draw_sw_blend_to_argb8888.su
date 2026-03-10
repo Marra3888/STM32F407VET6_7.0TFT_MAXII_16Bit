@@ -1,0 +1,4 @@
+../Core/lvgl/src/draw/sw/blend/lv_draw_sw_blend_to_argb8888.c:892:35:rgb888_image_blend	152	static
+../Core/lvgl/src/draw/sw/blend/lv_draw_sw_blend_to_argb8888.c:1099:35:argb8888_premultiplied_image_blend	176	static
+../Core/lvgl/src/draw/sw/blend/lv_draw_sw_blend_to_argb8888.c:238:28:lv_draw_sw_blend_color_to_argb8888	88	static
+../Core/lvgl/src/draw/sw/blend/lv_draw_sw_blend_to_argb8888.c:345:28:lv_draw_sw_blend_image_to_argb8888	264	static

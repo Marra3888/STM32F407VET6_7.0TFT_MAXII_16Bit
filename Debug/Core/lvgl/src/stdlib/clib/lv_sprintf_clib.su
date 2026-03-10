@@ -1,0 +1,2 @@
+../Core/lvgl/src/stdlib/clib/lv_sprintf_clib.c:40:5:lv_snprintf	16	static
+../Core/lvgl/src/stdlib/clib/lv_sprintf_clib.c:49:5:lv_vsnprintf	0	static

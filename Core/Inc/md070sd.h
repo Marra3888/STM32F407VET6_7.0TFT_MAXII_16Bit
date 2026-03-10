@@ -240,7 +240,7 @@ void MD_SetWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);
  * Очистка и заливка
  * ================================================================ */
 void MD_FillScreen(uint16_t color);
-void MD_Clear(void);
+void MD_Clear(uint16_t color);
 
 /* ================================================================
  * Рисование примитивов
@@ -268,5 +268,19 @@ void MD_ReadRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t *buffe
  * Копирование областей
  * ================================================================ */
 void MD_CopyRect(uint16_t srcX, uint16_t srcY, uint16_t dstX, uint16_t dstY, uint16_t w, uint16_t h);
+
+/* ================================================================
+ * Вывод текста
+ * ================================================================ */
+//void MD_DrawChar16x24(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg);
+//void MD_DrawString16x24(uint16_t x, uint16_t y, const char *str, uint16_t color, uint16_t bg);
+//void MD_DrawCharScaled(uint16_t x, uint16_t y, char c, uint8_t scale, uint16_t color, uint16_t bg);
+//void MD_DrawStringScaled(uint16_t x, uint16_t y, const char *str, uint8_t scale, uint16_t color, uint16_t bg);
+
+/* ================================================================
+ * Текст (шрифт Orbitron 8bpp)
+ * ================================================================ */
+void MD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg);
+void MD_DrawString(uint16_t x, uint16_t y, const char *str, uint16_t color, uint16_t bg);
 
 #endif /* MD070SD_H */

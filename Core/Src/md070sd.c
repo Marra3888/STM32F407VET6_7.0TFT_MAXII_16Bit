@@ -18,620 +18,283 @@
  * 3. RST должен быть LOW минимум 1мс, затем HIGH минимум 1мс
  */
 
+/*
+ * md070sd.c
+ * Библиотека для TFT дисплея MD070SD 800x480
+ * Поддержка шрифта Orbitron (LVGL формат, 8bpp Anti-aliased)
+ *
+ * Created on: Mar 2, 2026
+ * Author: Zver
+ */
+
 #include "md070sd.h"
+#include "lvgl.h" // Требуется для структур шрифта lv_font_t
+
+/*
+ * Ссылка на ваш шрифт Orbitron.
+ * Убедитесь, что файл MyFont.c добавлен в проект.
+ */
+extern const lv_font_t MyFont;
 
 /* ================================================================
- * Приватные переменные
+ * Базовые макросы и переменные
  * ================================================================ */
 static uint8_t currentDisplayPage = 0;
 static uint8_t currentWritePage = 0;
 
-/* ================================================================
- * Базовые функции записи
- * ================================================================ */
-static void MD_WriteCmd(uint16_t cmd)
-{
+static inline void MD_WriteCmd(uint16_t cmd) {
     LCD_CMD = cmd;
 }
 
-static void MD_WriteCmdData(uint16_t cmd, uint16_t data)
-{
+static inline void MD_WriteData(uint16_t data) {
+    LCD_DATA = data;
+}
+
+static void MD_WriteCmdData(uint16_t cmd, uint16_t data) {
     LCD_CMD = cmd;
     LCD_DATA = data;
 }
 
 /* ================================================================
- * Аппаратный сброс (если RST подключён к GPIO)
- * RST LOW минимум 1мс, затем HIGH минимум 1мс
+ * Аппаратный сброс
  * ================================================================ */
+void MD_Reset(void) {
 #ifdef LCD_RST_Pin
-void MD_Reset(void)
-{
     HAL_GPIO_WritePin(LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_RESET);
-    HAL_Delay(2);  /* 2мс LOW */
+    HAL_Delay(2);
     HAL_GPIO_WritePin(LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_SET);
-    HAL_Delay(2);  /* 2мс HIGH для внутренней инициализации */
-}
+    HAL_Delay(2);
 #else
-void MD_Reset(void)
-{
-    /* RST подключён к NRST STM32 — сброс происходит автоматически */
-    HAL_Delay(5);  /* Ждём завершения внутренней инициализации */
-}
+    HAL_Delay(5); // Если сброс подключен к NRST
 #endif
+}
 
 /* ================================================================
- * Инициализация
- * Рекомендуемая последовательность:
- * 1. Сброс
- * 2. Очистка экрана (подсветка выключена)
- * 3. Включение подсветки
+ * Инициализация дисплея
  * ================================================================ */
-void MD_Init(void)
-{
-    /* Сброс */
+void MD_Init(void) {
     MD_Reset();
 
-    /* Настройка режимов */
+    // Настройка регистров CPLD
     MD_SetDisplayPage(0);
     MD_SetWritePage(0);
-    MD_SetDisplayMode(DISPLAY_MODE_NORMAL);
-    MD_SetAddressDirection(ADDR_DIR_ROW);
+    MD_SetDisplayMode(DISPLAY_MODE_FLIP_LR);
+    MD_SetAddressDirection(ADDR_DIR_ROW); // Стандартное направление
 
-    /* Очистка экрана (подсветка ещё выключена — избегаем мерцания) */
+    // Включаем канал данных перед очисткой
     MD_WriteCmd(REG_DATA_CHANNEL);
-    MD_Clear();
 
-    /* Включаем подсветку */
-    MD_SetBacklight(BACKLIGHT_MAX);
+    MD_Clear(COLOR_BLACK);
+    MD_BacklightOn();
 }
 
 /* ================================================================
- * Подсветка (0-16)
- * PWM 300Hz, без мерцания
- * Значения > 16 игнорируются
+ * Управление подсветкой (0-16)
  * ================================================================ */
-void MD_SetBacklight(uint16_t brightness)
-{
-    if (brightness > BACKLIGHT_MAX) return;  /* Игнорируем значения > 16 */
+void MD_SetBacklight(uint16_t brightness) {
+    if (brightness > 16) brightness = 16;
     MD_WriteCmdData(REG_BACKLIGHT, brightness);
 }
 
-void MD_BacklightOn(void)
-{
-    MD_SetBacklight(BACKLIGHT_MAX);
-}
-
-void MD_BacklightOff(void)
-{
-    MD_SetBacklight(BACKLIGHT_OFF);
-}
+void MD_BacklightOn(void) { MD_SetBacklight(16); }
+void MD_BacklightOff(void) { MD_SetBacklight(0); }
 
 /* ================================================================
- * Управление страницами
+ * Служебные функции
  * ================================================================ */
-void MD_SetDisplayPage(uint8_t page)
-{
+void MD_SetDisplayPage(uint8_t page) {
     if (page >= LCD_PAGES) page = 0;
     currentDisplayPage = page;
     MD_WriteCmdData(REG_DISPLAY_PAGE, page);
 }
 
-void MD_SetWritePage(uint8_t page)
-{
+void MD_SetWritePage(uint8_t page) {
     if (page >= LCD_PAGES) page = 0;
     currentWritePage = page;
     MD_WriteCmdData(REG_WRITE_PAGE, page);
 }
 
-void MD_SwapPages(void)
-{
-    uint8_t temp = currentDisplayPage;
-    MD_SetDisplayPage(currentWritePage);
-    MD_SetWritePage(temp);
-}
-
-uint8_t MD_GetDisplayPage(void)
-{
-    return currentDisplayPage;
-}
-
-uint8_t MD_GetWritePage(void)
-{
-    return currentWritePage;
-}
-
-/* ================================================================
- * Режимы работы
- * ================================================================ */
-void MD_Sleep(uint8_t enable)
-{
-    MD_WriteCmdData(REG_SLEEP, enable ? 0x0001 : 0x0000);
-}
-
-void MD_WakeUp(void)
-{
-    /* Выход из сна — отправить любую команду чтения/записи */
-    MD_WriteCmd(REG_DATA_CHANNEL);
-}
-
-void MD_SetDisplayMode(uint8_t mode)
-{
+void MD_SetDisplayMode(uint8_t mode) {
     MD_WriteCmdData(REG_DISPLAY_MODE, mode);
 }
 
-void MD_SetRotation(uint8_t rotation)
-{
-    switch (rotation)
-    {
-        case 0:
-            MD_SetDisplayMode(DISPLAY_MODE_NORMAL);
-            break;
-        case 1:
-            MD_SetDisplayMode(DISPLAY_MODE_FLIP_LR);
-            break;
-        case 2:
-            MD_SetDisplayMode(DISPLAY_MODE_FLIP_BOTH);
-            break;
-        case 3:
-            MD_SetDisplayMode(DISPLAY_MODE_FLIP_UD);
-            break;
-        default:
-            MD_SetDisplayMode(DISPLAY_MODE_NORMAL);
-            break;
-    }
-}
-
-void MD_SetAddressDirection(uint8_t dir)
-{
+void MD_SetAddressDirection(uint8_t dir) {
     MD_WriteCmdData(REG_ADDR_DIR, dir);
 }
 
 /* ================================================================
- * Окно вывода
- * Координаты преобразуются в адрес RAM автоматически CPLD
+ * Установка окна (области рисования)
  * ================================================================ */
-void MD_SetWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
-{
+void MD_SetWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2) {
     MD_WriteCmdData(REG_ROW_START, y1);
     MD_WriteCmdData(REG_COL_START, x1);
     MD_WriteCmdData(REG_ROW_END, y2);
     MD_WriteCmdData(REG_COL_END, x2);
-    MD_WriteCmd(REG_DATA_CHANNEL);  /* Регистр должен быть 0x0F для записи данных */
+    MD_WriteCmd(REG_DATA_CHANNEL); // Подготовка к записи данных
 }
 
 /* ================================================================
- * Очистка и заливка
+ * Примитивы рисования
  * ================================================================ */
-void MD_FillScreen(uint16_t color)
-{
+void MD_FillScreen(uint16_t color) {
     MD_SetWindow(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
-
     uint32_t total = (uint32_t)LCD_WIDTH * LCD_HEIGHT;
-    uint32_t blocks = total / 8;
-    uint32_t remainder = total % 8;
-
-    while (blocks--)
-    {
-        LCD_DATA = color; LCD_DATA = color; LCD_DATA = color; LCD_DATA = color;
-        LCD_DATA = color; LCD_DATA = color; LCD_DATA = color; LCD_DATA = color;
-    }
-
-    while (remainder--)
-    {
-        LCD_DATA = color;
-    }
+    while (total--) LCD_DATA = color;
 }
 
-void MD_Clear(void)
-{
-    MD_FillScreen(COLOR_BLACK);
+void MD_Clear(uint16_t color) {
+    MD_FillScreen(color);
 }
 
-/* ================================================================
- * Рисование пикселя
- * ================================================================ */
-void MD_DrawPixel(uint16_t x, uint16_t y, uint16_t color)
-{
+void MD_DrawPixel(uint16_t x, uint16_t y, uint16_t color) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
-
     MD_SetWindow(x, y, x, y);
     LCD_DATA = color;
 }
 
-/* ================================================================
- * Горизонтальная линия
- * ================================================================ */
-void MD_DrawHLine(uint16_t x, uint16_t y, uint16_t len, uint16_t color)
-{
-    if (x >= LCD_WIDTH || y >= LCD_HEIGHT || len == 0) return;
-    if (x + len > LCD_WIDTH) len = LCD_WIDTH - x;
-
-    MD_SetWindow(x, y, x + len - 1, y);
-
-    for (uint16_t i = 0; i < len; i++)
-    {
-        LCD_DATA = color;
-    }
-}
-
-/* ================================================================
- * Вертикальная линия
- * ================================================================ */
-void MD_DrawVLine(uint16_t x, uint16_t y, uint16_t len, uint16_t color)
-{
-    if (x >= LCD_WIDTH || y >= LCD_HEIGHT || len == 0) return;
-    if (y + len > LCD_HEIGHT) len = LCD_HEIGHT - y;
-
-    MD_SetWindow(x, y, x, y + len - 1);
-
-    for (uint16_t i = 0; i < len; i++)
-    {
-        LCD_DATA = color;
-    }
-}
-
-/* ================================================================
- * Линия (алгоритм Брезенхэма)
- * ================================================================ */
-void MD_DrawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color)
-{
-    /* Оптимизация для горизонтальных и вертикальных линий */
-    if (y0 == y1)
-    {
-        if (x0 > x1) { int16_t t = x0; x0 = x1; x1 = t; }
-        MD_DrawHLine(x0, y0, x1 - x0 + 1, color);
-        return;
-    }
-    if (x0 == x1)
-    {
-        if (y0 > y1) { int16_t t = y0; y0 = y1; y1 = t; }
-        MD_DrawVLine(x0, y0, y1 - y0 + 1, color);
-        return;
-    }
-
-    int16_t dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
-    int16_t dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
-    int16_t sx = (x0 < x1) ? 1 : -1;
-    int16_t sy = (y0 < y1) ? 1 : -1;
-    int16_t err = dx - dy;
-
-    while (1)
-    {
-        MD_DrawPixel(x0, y0, color);
-
-        if (x0 == x1 && y0 == y1) break;
-
-        int16_t e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x0 += sx; }
-        if (e2 < dx)  { err += dx; y0 += sy; }
-    }
-}
-
-/* ================================================================
- * Прямоугольник (контур)
- * ================================================================ */
-void MD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
-{
-    if (w == 0 || h == 0) return;
-
-    MD_DrawHLine(x, y, w, color);
-    MD_DrawHLine(x, y + h - 1, w, color);
-    MD_DrawVLine(x, y, h, color);
-    MD_DrawVLine(x + w - 1, y, h, color);
-}
-
-/* ================================================================
- * Прямоугольник (заливка)
- * ================================================================ */
-void MD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
-{
-    if (x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0 || h == 0) return;
-    if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
-    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
-
-    MD_SetWindow(x, y, x + w - 1, y + h - 1);
-
-    uint32_t total = (uint32_t)w * h;
-    uint32_t blocks = total / 8;
-    uint32_t remainder = total % 8;
-
-    while (blocks--)
-    {
-        LCD_DATA = color; LCD_DATA = color; LCD_DATA = color; LCD_DATA = color;
-        LCD_DATA = color; LCD_DATA = color; LCD_DATA = color; LCD_DATA = color;
-    }
-
-    while (remainder--)
-    {
-        LCD_DATA = color;
-    }
-}
-
-/* ================================================================
- * Вспомогательные функции для кругов
- * ================================================================ */
-static void MD_DrawCircleHelper(int16_t x0, int16_t y0, int16_t r, uint8_t corner, uint16_t color)
-{
-    int16_t f = 1 - r;
-    int16_t ddF_x = 1;
-    int16_t ddF_y = -2 * r;
-    int16_t x = 0;
-    int16_t y = r;
-
-    while (x < y)
-    {
-        if (f >= 0)
-        {
-            y--;
-            ddF_y += 2;
-            f += ddF_y;
-        }
-        x++;
-        ddF_x += 2;
-        f += ddF_x;
-
-        if (corner & 0x4)
-        {
-            MD_DrawPixel(x0 + x, y0 + y, color);
-            MD_DrawPixel(x0 + y, y0 + x, color);
-        }
-        if (corner & 0x2)
-        {
-            MD_DrawPixel(x0 + x, y0 - y, color);
-            MD_DrawPixel(x0 + y, y0 - x, color);
-        }
-        if (corner & 0x8)
-        {
-            MD_DrawPixel(x0 - y, y0 + x, color);
-            MD_DrawPixel(x0 - x, y0 + y, color);
-        }
-        if (corner & 0x1)
-        {
-            MD_DrawPixel(x0 - y, y0 - x, color);
-            MD_DrawPixel(x0 - x, y0 - y, color);
-        }
-    }
-}
-
-static void MD_FillCircleHelper(int16_t x0, int16_t y0, int16_t r, uint8_t corner, int16_t delta, uint16_t color)
-{
-    int16_t f = 1 - r;
-    int16_t ddF_x = 1;
-    int16_t ddF_y = -2 * r;
-    int16_t x = 0;
-    int16_t y = r;
-
-    while (x < y)
-    {
-        if (f >= 0)
-        {
-            y--;
-            ddF_y += 2;
-            f += ddF_y;
-        }
-        x++;
-        ddF_x += 2;
-        f += ddF_x;
-
-        if (corner & 0x1)
-        {
-            MD_DrawVLine(x0 + x, y0 - y, 2 * y + 1 + delta, color);
-            MD_DrawVLine(x0 + y, y0 - x, 2 * x + 1 + delta, color);
-        }
-        if (corner & 0x2)
-        {
-            MD_DrawVLine(x0 - x, y0 - y, 2 * y + 1 + delta, color);
-            MD_DrawVLine(x0 - y, y0 - x, 2 * x + 1 + delta, color);
-        }
-    }
-}
-
-/* ================================================================
- * Круг (контур)
- * ================================================================ */
-void MD_DrawCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color)
-{
-    int16_t x = r;
-    int16_t y = 0;
-    int16_t err = 0;
-
-    while (x >= y)
-    {
-        MD_DrawPixel(x0 + x, y0 + y, color);
-        MD_DrawPixel(x0 + y, y0 + x, color);
-        MD_DrawPixel(x0 - y, y0 + x, color);
-        MD_DrawPixel(x0 - x, y0 + y, color);
-        MD_DrawPixel(x0 - x, y0 - y, color);
-        MD_DrawPixel(x0 - y, y0 - x, color);
-        MD_DrawPixel(x0 + y, y0 - x, color);
-        MD_DrawPixel(x0 + x, y0 - y, color);
-
-        y++;
-        if (err <= 0) err += 2 * y + 1;
-        if (err > 0) { x--; err -= 2 * x + 1; }
-    }
-}
-
-/* ================================================================
- * Круг (заливка)
- * ================================================================ */
-void MD_FillCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color)
-{
-    MD_DrawVLine(x0, y0 - r, 2 * r + 1, color);
-    MD_FillCircleHelper(x0, y0, r, 3, 0, color);
-}
-
-/* ================================================================
- * Треугольник (контур)
- * ================================================================ */
-void MD_DrawTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color)
-{
-    MD_DrawLine(x0, y0, x1, y1, color);
-    MD_DrawLine(x1, y1, x2, y2, color);
-    MD_DrawLine(x2, y2, x0, y0, color);
-}
-
-/* ================================================================
- * Треугольник (заливка)
- * ================================================================ */
-void MD_FillTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color)
-{
-    int16_t a, b, y, last;
-
-    /* Сортируем вершины по Y */
-    if (y0 > y1) { int16_t t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
-    if (y1 > y2) { int16_t t = y1; y1 = y2; y2 = t; t = x1; x1 = x2; x2 = t; }
-    if (y0 > y1) { int16_t t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
-
-    if (y0 == y2)
-    {
-        a = b = x0;
-        if (x1 < a) a = x1;
-        else if (x1 > b) b = x1;
-        if (x2 < a) a = x2;
-        else if (x2 > b) b = x2;
-        MD_DrawHLine(a, y0, b - a + 1, color);
-        return;
-    }
-
-    int16_t dx01 = x1 - x0, dy01 = y1 - y0;
-    int16_t dx02 = x2 - x0, dy02 = y2 - y0;
-    int16_t dx12 = x2 - x1, dy12 = y2 - y1;
-    int32_t sa = 0, sb = 0;
-
-    if (y1 == y2) last = y1;
-    else last = y1 - 1;
-
-    for (y = y0; y <= last; y++)
-    {
-        a = x0 + sa / dy01;
-        b = x0 + sb / dy02;
-        sa += dx01;
-        sb += dx02;
-        if (a > b) { int16_t t = a; a = b; b = t; }
-        MD_DrawHLine(a, y, b - a + 1, color);
-    }
-
-    sa = dx12 * (y - y1);
-    sb = dx02 * (y - y0);
-    for (; y <= y2; y++)
-    {
-        a = x1 + sa / dy12;
-        b = x0 + sb / dy02;
-        sa += dx12;
-        sb += dx02;
-        if (a > b) { int16_t t = a; a = b; b = t; }
-        MD_DrawHLine(a, y, b - a + 1, color);
-    }
-}
-
-/* ================================================================
- * Прямоугольник со скруглёнными углами (контур)
- * ================================================================ */
-void MD_DrawRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color)
-{
-    if (w == 0 || h == 0) return;
-    if (r > w / 2) r = w / 2;
-    if (r > h / 2) r = h / 2;
-
-    MD_DrawHLine(x + r, y, w - 2 * r, color);
-    MD_DrawHLine(x + r, y + h - 1, w - 2 * r, color);
-    MD_DrawVLine(x, y + r, h - 2 * r, color);
-    MD_DrawVLine(x + w - 1, y + r, h - 2 * r, color);
-
-    MD_DrawCircleHelper(x + r, y + r, r, 1, color);
-    MD_DrawCircleHelper(x + w - r - 1, y + r, r, 2, color);
-    MD_DrawCircleHelper(x + w - r - 1, y + h - r - 1, r, 4, color);
-    MD_DrawCircleHelper(x + r, y + h - r - 1, r, 8, color);
-}
-
-/* ================================================================
- * Прямоугольник со скруглёнными углами (заливка)
- * ================================================================ */
-void MD_FillRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color)
-{
-    if (w == 0 || h == 0) return;
-    if (r > w / 2) r = w / 2;
-    if (r > h / 2) r = h / 2;
-
-    MD_FillRect(x + r, y, w - 2 * r, h, color);
-
-    MD_FillCircleHelper(x + w - r - 1, y + r, r, 1, h - 2 * r - 1, color);
-    MD_FillCircleHelper(x + r, y + r, r, 2, h - 2 * r - 1, color);
-}
-
-/* ================================================================
- * Чтение пикселя
- * ================================================================ */
-uint16_t MD_ReadPixel(uint16_t x, uint16_t y)
-{
-    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return 0;
-
-    MD_SetWindow(x, y, x, y);
-
-    LCD_CMD = REG_READ_DATA;
-
-    uint16_t color = LCD_DATA;
-
-    return color;
-}
-
-/* ================================================================
- * Чтение области в буфер
- * ================================================================ */
-void MD_ReadRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t *buffer)
-{
+void MD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
     if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
-    if (buffer == NULL) return;
 
     MD_SetWindow(x, y, x + w - 1, y + h - 1);
-
-    LCD_CMD = REG_READ_DATA;
-
     uint32_t total = (uint32_t)w * h;
-    for (uint32_t i = 0; i < total; i++)
-    {
-        buffer[i] = LCD_DATA;
-    }
+    while (total--) LCD_DATA = color;
 }
 
 /* ================================================================
- * Копирование области экрана
+ * Смешивание цветов (Alpha Blending) для сглаживания шрифтов
+ * alpha: 0 (фон) ... 255 (текст)
  * ================================================================ */
-void MD_CopyRect(uint16_t srcX, uint16_t srcY, uint16_t dstX, uint16_t dstY, uint16_t w, uint16_t h)
-{
-    if (w == 0 || h == 0) return;
-    if (srcX >= LCD_WIDTH || srcY >= LCD_HEIGHT) return;
-    if (dstX >= LCD_WIDTH || dstY >= LCD_HEIGHT) return;
+static inline uint16_t MD_MixColors(uint16_t fg, uint16_t bg, uint8_t alpha) {
+    if (alpha == 0) return bg;
+    if (alpha == 255) return fg;
 
-    /* Ограничиваем размеры */
-    if (srcX + w > LCD_WIDTH) w = LCD_WIDTH - srcX;
-    if (srcY + h > LCD_HEIGHT) h = LCD_HEIGHT - srcY;
-    if (dstX + w > LCD_WIDTH) w = LCD_WIDTH - dstX;
-    if (dstY + h > LCD_HEIGHT) h = LCD_HEIGHT - dstY;
+    // Распаковка RGB565 (R:5, G:6, B:5)
+    uint16_t r_fg = (fg >> 11) & 0x1F;
+    uint16_t g_fg = (fg >> 5) & 0x3F;
+    uint16_t b_fg = fg & 0x1F;
 
-    /* Читаем построчно и записываем */
-    uint16_t lineBuffer[LCD_WIDTH];
+    uint16_t r_bg = (bg >> 11) & 0x1F;
+    uint16_t g_bg = (bg >> 5) & 0x3F;
+    uint16_t b_bg = bg & 0x1F;
 
-    for (uint16_t row = 0; row < h; row++)
-    {
-        /* Читаем строку */
-        MD_SetWindow(srcX, srcY + row, srcX + w - 1, srcY + row);
-        LCD_CMD = REG_READ_DATA;
+    // Смешивание: result = (fg * a + bg * (255 - a)) / 255
+    uint16_t inv_alpha = 255 - alpha;
 
-        for (uint16_t i = 0; i < w; i++)
-        {
-            lineBuffer[i] = LCD_DATA;
+    // Используем упрощенное деление на 256 (сдвиг >> 8) для скорости
+    uint16_t r = (r_fg * alpha + r_bg * inv_alpha) >> 8;
+    uint16_t g = (g_fg * alpha + g_bg * inv_alpha) >> 8;
+    uint16_t b = (b_fg * alpha + b_bg * inv_alpha) >> 8;
+
+    return (r << 11) | (g << 5) | b;
+}
+
+/* ================================================================
+ * РИСОВАНИЕ ШРИФТА ORBITRON (8bpp)
+ * ================================================================ */
+
+/*
+ * Вывод одного символа шрифта Orbitron
+ * x, y - координаты левого верхнего угла строки (не базовой линии)
+ */
+void MD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg) {
+    // Достаем дескрипторы шрифта LVGL
+    const lv_font_fmt_txt_dsc_t * fdsc = (const lv_font_fmt_txt_dsc_t *)MyFont.dsc;
+    const lv_font_fmt_txt_cmap_t * cmaps = fdsc->cmaps; // В вашем шрифте 1 cmap
+
+    // 1. Поиск ID глифа по коду ASCII
+    uint32_t unicode = (uint32_t)c;
+    uint32_t glyph_id = 0;
+
+    // Проверяем диапазон (в MyFont.c range_start=47, length=12: / 0..9 :)
+    if (unicode >= cmaps->range_start && unicode < (cmaps->range_start + cmaps->list_length)) {
+        // Если cmap type 0 (массива юникода нет, символы идут подряд)
+        glyph_id = cmaps->glyph_id_start + (unicode - cmaps->range_start);
+    } else {
+        return; // Символ не найден в шрифте
+    }
+
+    // 2. Получаем параметры глифа
+    const lv_font_fmt_txt_glyph_dsc_t * gdsc = &fdsc->glyph_dsc[glyph_id];
+
+    uint16_t w = gdsc->box_w;
+    uint16_t h = gdsc->box_h;
+
+    if (w == 0 || h == 0) return; // Пробел или пустой символ
+
+    // 3. Расчет позиции вывода (LVGL хранит ofs_y от базовой линии вверх)
+    // line_height шрифта = 30.
+    // Реальный Y начала отрисовки битмапа:
+    // y (верх строки) + (line_height - base_line) - box_h - ofs_y
+    // Для упрощения, если шрифт генерировался без сложных смещений, можно подбирать.
+    // Стандартная формула LVGL -> экран:
+    uint16_t draw_x = x + gdsc->ofs_x;
+    uint16_t draw_y = y + (MyFont.line_height - MyFont.base_line - h - gdsc->ofs_y);
+
+    // 4. Получаем указатель на начало данных битмапа
+    const uint8_t * bitmap = fdsc->glyph_bitmap + gdsc->bitmap_index;
+
+    // 5. Отрисовка
+    // Устанавливаем окно дисплея строго по размеру символа (box_w * box_h)
+    MD_SetWindow(draw_x, draw_y, draw_x + w - 1, draw_y + h - 1);
+
+    // В битмапе данные идут построчно. 8 бит = 1 пиксель (альфа канал)
+    for (int i = 0; i < w * h; i++) {
+        uint8_t alpha = bitmap[i];
+
+        // Оптимизация: если пиксель прозрачный (0) - пишем фон
+        // Если непрозрачный (255) - пишем цвет
+        // Иначе смешиваем
+        if (alpha == 0) {
+            LCD_DATA = bg;
+        } else if (alpha == 255) {
+            LCD_DATA = color;
+        } else {
+            LCD_DATA = MD_MixColors(color, bg, alpha);
+        }
+    }
+}
+
+/*
+ * Вывод строки.
+ * Поддерживает только символы, имеющиеся в шрифте (0-9, :, /)
+ */
+void MD_DrawString(uint16_t x, uint16_t y, const char *str, uint16_t color, uint16_t bg) {
+    uint16_t curr_x = x;
+    const lv_font_fmt_txt_dsc_t * fdsc = (const lv_font_fmt_txt_dsc_t *)MyFont.dsc;
+    const lv_font_fmt_txt_cmap_t * cmaps = fdsc->cmaps;
+
+    while (*str) {
+        char c = *str++;
+
+        if (c == ' ') {
+            // Ширина пробела
+            uint16_t space_w = 10;
+            MD_FillRect(curr_x, y, space_w, MyFont.line_height, bg);
+            curr_x += space_w;
+            continue;
         }
 
-        /* Записываем строку */
-        MD_SetWindow(dstX, dstY + row, dstX + w - 1, dstY + row);
-        for (uint16_t i = 0; i < w; i++)
-        {
-            LCD_DATA = lineBuffer[i];
+        uint32_t unicode = (uint32_t)c;
+        uint32_t glyph_id = 0;
+
+        if (unicode >= cmaps->range_start && unicode < (cmaps->range_start + cmaps->list_length)) {
+            glyph_id = cmaps->glyph_id_start + (unicode - cmaps->range_start);
+
+            // Рисуем символ
+            MD_DrawChar(curr_x, y, c, color, bg);
+
+            // Сдвигаем курсор. adv_w хранится в формате fixed point 4 бита (умножено на 16)
+            uint16_t adv_w = fdsc->glyph_dsc[glyph_id].adv_w >> 4;
+
+            // Если adv_w = 0 (ошибка генерации), берем ширину бокса + отступ
+            if (adv_w == 0) adv_w = fdsc->glyph_dsc[glyph_id].box_w + 2;
+
+            curr_x += adv_w;
+        } else {
+            // Если символа нет в шрифте, пропускаем или рисуем квадрат
+            // (в данном примере просто пропускаем)
         }
     }
 }
